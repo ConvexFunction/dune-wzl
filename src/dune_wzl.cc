@@ -8,51 +8,78 @@
 #include<iostream>
 #include<vector>
 #include<string>
+
 #include<dune/common/exceptions.hh>
 #include<dune/common/fvector.hh>
+#include<dune/common/timer.hh>
+
 #include<dune/grid/yaspgrid.hh>
 #include<dune/grid/io/file/vtk/vtkwriter.hh>
+#include<dune/grid/uggrid.hh>
+//#include<dune/grid/alugrid.hh>
+
 #include<dune/istl/bvector.hh>
 #include<dune/istl/operators.hh>
 #include<dune/istl/solvers.hh>
 #include<dune/istl/preconditioners.hh>
 #include<dune/istl/io.hh>
+#include<dune/istl/umfpack.hh>
 
 #include<dune/pdelab/finiteelementmap/q1fem.hh>
 #include<dune/pdelab/constraints/conforming.hh>
-#include<dune/pdelab/gridfunctionspace/gridfunctionspace.hh>
+#include<dune/pdelab/gridfunctionspace/vectorgridfunctionspace.hh>
 #include<dune/pdelab/gridfunctionspace/gridfunctionspaceutilities.hh>
 #include<dune/pdelab/gridfunctionspace/interpolate.hh>
+#include <dune/pdelab/gridfunctionspace/vtk.hh>
 #include<dune/pdelab/constraints/common/constraints.hh>
 #include<dune/pdelab/common/function.hh>
 #include<dune/pdelab/backend/istlvectorbackend.hh>
 #include<dune/pdelab/backend/istlmatrixbackend.hh>
 #include<dune/pdelab/backend/istlsolverbackend.hh>
-#include<dune/pdelab/localoperator/laplacedirichletp12d.hh>
-#include<dune/pdelab/localoperator/poisson.hh>
+//#include<dune/pdelab/localoperator/laplacedirichletp12d.hh>
+//#include<dune/pdelab/localoperator/poisson.hh>
+#include<dune/pdelab/localoperator/linearelasticity.hh>
 #include<dune/pdelab/constraints/constraintsparameters.hh>
 #include<dune/pdelab/gridoperator/gridoperator.hh>
 
-#include <dune/grid/uggrid.hh>
-//#include <dune/grid/alugrid.hh>
-#include <dune/istl/umfpack.hh>
 #include "nasreader.hh"
 
 
 using namespace Dune;
 
-//===============================================================
-//===============================================================
-// Solve the Poisson equation
-//           - \Delta u = f in \Omega, 
-//                    u = g on \partial\Omega_D
-//  -\nabla u \cdot \nu = j on \partial\Omega_N
-//===============================================================
-//===============================================================
+const int dim = 3;
+
+typedef double Real;
+
+typedef BlockVector<FieldVector<Real,dim> > VectorType;
+typedef BCRSMatrix<FieldMatrix<Real,dim,dim> > MatrixType;
+typedef FieldVector<Real, dim> GlobalVector;
+
+typedef UGGrid<dim> GridType;
+//typedef ALUCubeGrid<dim, dim> GridType;
+
+typedef PDELab::Q1LocalFiniteElementMap<Real,Real,dim> FEM;
+typedef PDELab::VectorGridFunctionSpace<
+  GridType::LeafGridView,
+  FEM,
+  dim,
+  PDELab::ISTLVectorBackend<>,
+  PDELab::ISTLVectorBackend<>,
+  PDELab::ConformingDirichletConstraints,
+  PDELab::LexicographicOrderingTag,
+  PDELab::DefaultLeafOrderingTag
+  > GFS;
+
+typedef GFS::ConstraintsContainer<Real>::Type C;
+
+typedef PDELab::GridOperator<GFS,GFS,PDELab::LinearElasticity,PDELab::ISTLMatrixBackend,Real,Real,Real,C,C> GO;
+typedef GO::Traits::Domain V;
+typedef GO::Jacobian M;
+typedef M::BaseT ISTL_M;
+typedef V::BaseT ISTL_V;
 
 
 // function for defining the source term
-// { constant_function_begin }
 template<typename GV, typename RF>
 class ConstantFunction
   : public PDELab::AnalyticGridFunctionBase<PDELab::AnalyticGridFunctionTraits<GV,RF,1>,
@@ -62,7 +89,7 @@ public:
   typedef PDELab::AnalyticGridFunctionTraits<GV,RF,1> Traits;
   typedef PDELab::AnalyticGridFunctionBase<Traits,ConstantFunction<GV,RF> > BaseT;
 
-  ConstantFunction (const GV& gv, double value) 
+  ConstantFunction (const GV& gv, Real value) 
   : BaseT(gv), value_(value)
   {}
   
@@ -74,7 +101,6 @@ public:
 private:
   typename Traits::RangeType value_;
 };
-// { constant_function_end }
 
 
 //===============================================================
@@ -82,16 +108,14 @@ private:
 //===============================================================
 
 // constraints parameter class for selecting boundary condition type 
-// { dirichlet_boundary_begin }
-
 template<typename GridView>
-struct AllDirichlet
+struct Dirichlet
   : public PDELab::DirichletConstraintsParameters /*@\label{bcp:base}@*/
 {
   const std::vector<bool>& boundaryMap;
   const GridView& gridView;
 
-  AllDirichlet(const std::vector<bool>& map, const GridView& gv) : boundaryMap(map), gridView(gv) {}
+  Dirichlet(const std::vector<bool>& map, const GridView& gv) : boundaryMap(map), gridView(gv) {}
 
   template<typename Intersection>
   bool isDirichlet(const Intersection& intersection,   /*@\label{bcp:name}@*/
@@ -101,10 +125,10 @@ struct AllDirichlet
     bool isBoundary = true;
 
     for (size_t i = 0; isBoundary && i < 4; ++i) {
-      const ReferenceElement<double, 3>& referenceElement = ReferenceElements<double, 3>::general(intersection.inside()->type());
+      const ReferenceElement<Real, dim>& referenceElement = ReferenceElements<Real, dim>::general(intersection.inside()->type());
 
-      unsigned localIdx = referenceElement.subEntity(intersection.indexInInside(), 1, i, 3);
-      unsigned globalIdx = gridView.indexSet().subIndex(*intersection.inside(), localIdx, 3);
+      unsigned localIdx = referenceElement.subEntity(intersection.indexInInside(), 1, i, dim);
+      unsigned globalIdx = gridView.indexSet().subIndex(*intersection.inside(), localIdx, dim);
 
       isBoundary = isBoundary && boundaryMap[globalIdx];
     }
@@ -112,91 +136,55 @@ struct AllDirichlet
     return isBoundary;
   }
 };
-// { dirichlet_boundary_end }
 
 
-// Assemble the Poisson system
-// { assembler_signature_begin }
+// Assemble the system
 template<typename GridView> 
-void poisson( const GridView& gridView, 
-              BCRSMatrix<FieldMatrix<double,1,1> >& stiffnessMatrix,
-              BlockVector<FieldVector<double,1> >& rhs,
+void assemble(const GridView& gridView,
+              const GFS& gfs,
+              ISTL_M& stiffnessMatrix,
+              ISTL_V& rhs,
               const std::vector<bool>& boundaryMap)
-// { assembler_signature_end }
 {
-    // make finite element map
-    // { assembler_types_begin }
-    typedef typename GridView::ctype DF;
-    typedef double R;
-    // { assembler_types_end }
-
-    // { assembler_fespace_begin }
-    // constants and types
-    typedef PDELab::ConformingDirichletConstraints Constraints;
-    Constraints con;
-
-    // make grid function space
-    typedef PDELab::Q1LocalFiniteElementMap<DF,R,GridView::dimension> FEM;
-    FEM fem;
-    typedef PDELab::ISTLVectorBackend<> VBE;
-    typedef PDELab::GridFunctionSpace<GridView,FEM,Constraints,VBE> GFS; 
-    GFS gfs(gridView, fem, con);
-
     // make constraints map and initialize it from a function
-    typedef typename GFS::template ConstraintsContainer<R>::Type C;
     C cg;
     cg.clear();
 
-    AllDirichlet<GridView> bctype(boundaryMap, gridView);
+    Dirichlet<GridView> bctype(boundaryMap, gridView);
     PDELab::constraints(bctype, gfs, cg);
-    // { assembler_fespace_end }
 
     // make grid operator
-    // { assembler_create_begin }
-    typedef ConstantFunction<GridView,R> FType;
-    FType f(gridView, 1);
-    typedef ConstantFunction<GridView,R> JType;
-    JType j(gridView, 0);
-  
-    const int qorder = 2;
-    typedef PDELab::Poisson<FType,AllDirichlet<GridView>,JType,qorder> LOP; 
-    LOP lop(f, bctype, j);
+    ConstantFunction<typename GridType::LeafGridView,Real> f(gridView, 1);
 
-    typedef PDELab::GridOperator<GFS,GFS,LOP,PDELab::ISTLMatrixBackend,R,R,R,C,C> GO;
+    PDELab::LinearElasticity lop(3e5, 3e5, 0);
+
     GO go(gfs, cg, gfs, cg, lop);
-    // { assembler_create_end }
 
-    // { assembler_matrix_begin }
     // make coefficent vector and initialize it from a function
-    typedef typename GO::Traits::Domain VectorType;
-    VectorType x0(gfs);
+    V x0(gfs);
     x0 = 0.0;
 
+    ConstantFunction<GridView,Real> g(gridView, 1);
+    PDELab::interpolate(g, gfs, x0);
+    //PDELab::set_shifted_dofs(cg, 0.0, x0);
+    PDELab::set_nonconstrained_dofs(cg, 0.0, x0);
+
     // represent operator as a matrix
-    typedef typename GO::Jacobian M;
     M m(go);
     m = 0.0;
 
-    go.jacobian(x0,m);
-    stiffnessMatrix = m.base();
-    // { assembler_matrix_end }
+    go.jacobian(x0, m);
 
     // evaluate residual w.r.t initial guess
-    // { assembler_vector_begin }
-    ConstantFunction<GridView,R> g(gridView,0);
-    PDELab::interpolate(g, gfs, x0);
-    PDELab::set_shifted_dofs(cg, 0.0, x0);
-
-    VectorType r(gfs);
+    V r(gfs);
     r = 0.0;
 
     go.residual(x0, r);
-  
-    rhs = r.base();
-    // { assembler_vector_end }
-}
-// { assembler_end }
 
+    // get actual matrices
+    stiffnessMatrix = m.base();
+    rhs = r.base();
+}
 
 
 int main(int argc, char** argv) try
@@ -211,17 +199,20 @@ int main(int argc, char** argv) try
       return 1;
     }
 
-    const int dim = 3;
-    typedef UGGrid<dim> GridType;
-    //typedef ALUCubeGrid<dim, dim> GridType;
-    typedef FieldVector<double, dim> GlobalVector;
+    std::cout << "Reading " << argv[1] << " ..." << std::endl;
+
+    // Create and start timer
+    Timer watch;
+
+    // Create grid by reading *.nas file
     GridType* grid;
+
     std::vector<unsigned> rigidNodes;
     std::vector<std::pair<unsigned, GlobalVector> > forces;
-    NasReader<double, GridType>::read(argv[1], grid, rigidNodes, forces);
-    std::cout << "Forces: " << forces.size() << std::endl;
 
-    // Convert nodes to bitmap
+    NasReader<Real, GridType>::read(argv[1], grid, rigidNodes, forces);
+
+    // Convert nodes to bitmaps
     std::vector<bool> rigidNodeMap(grid->size(dim));
     for (int i = 0; i < grid->size(dim); ++i)
       rigidNodeMap[i] = 0;
@@ -233,41 +224,66 @@ int main(int argc, char** argv) try
     for (int i = 0; i < grid->size(dim); ++i)
       forceMap[i] = 0;
 
-    for (int i = 0; i < rigidNodes.size(); ++i)
+    for (int i = 0; i < forces.size(); ++i)
       forceMap[forces[i].first] = true;
 
 
+    // Output how long reading the file took us
+    watch.stop();
+    std::cout << "Reading and setting up vectors took " << watch.lastElapsed() << " seconds." << std::endl;
+    std::cout << "Now setting up the stiffness matrix and the right hand side ..." << std::endl;
+    watch.start();
+
     // assemble problem
-    typedef BlockVector<FieldVector<double,1> > VectorType;
-    typedef BCRSMatrix<FieldMatrix<double,1,1> > MatrixType;
+    FEM fem;
+    GFS gfs(grid->leafView(), fem);
+    gfs.name("displacement");
+  
+    ISTL_M stiffnessMatrix;
+    ISTL_V rhs;
 
+    assemble(grid->leafView(), gfs, stiffnessMatrix, rhs, rigidNodeMap);
 
-    MatrixType stiffnessMatrix;
-    VectorType rhs;
-
-    poisson(grid->leafView(), stiffnessMatrix, rhs, rigidNodeMap);
+    // Output how long setting up the matrices took us
+    watch.stop();
+    std::cout << "Assembling the stiffness matrix and setting up the right hand side took " << watch.lastElapsed() << " seconds." << std::endl;
+    std::cout << "Now computing the solution ..." << std::endl;
+    watch.start();
 
     // /////////////////////////
     //   Compute solution
     // /////////////////////////
-   
-    VectorType x(rhs.size());
-    x = 0;
 
     // Object storing some statistics about the solving process
     InverseOperatorResult statistics;
 
     // Solve!
-    UMFPack<MatrixType> solver(stiffnessMatrix, 1); // "1" for verbose output
+    /*
+    MatrixAdapter<ISTL_M,ISTL_V,ISTL_V> opa(stiffnessMatrix);
+    SeqILU0<ISTL_M,ISTL_V,ISTL_V> ilu0(stiffnessMatrix,1e-2);
+    CGSolver<ISTL_V> solver(opa,ilu0,1E-4,150,2);
+    */
 
+    std::cout << "   Elapsed time before calling UMFPack constructor: "<< watch.elapsed() << std::endl;
+    UMFPack<ISTL_M> solver(stiffnessMatrix);
+    std::cout << "   Elapsed time after calling UMFPack constructor: " << watch.elapsed() << std::endl;
+
+    V x(gfs, 0);
     solver.apply(x, rhs, statistics);
+    std::cout << "   Elapsed time after apply: " << watch.elapsed() << std::endl;
 
+    // Read our stopwatch for a last time
+    watch.stop();
+    std::cout << "Getting the solution took " << watch.lastElapsed() << " seconds." << std::endl;
+    std::cout << "Total time: " << watch.elapsed() << " seconds." << std::endl;
 
     // Output
     VTKWriter<GridType::LeafGridView> vtkWriter(grid->leafView());
+
     vtkWriter.addVertexData(rigidNodeMap, "rigid");
     vtkWriter.addVertexData(forceMap, "force");
-    vtkWriter.addVertexData(x, "solution");
+    PDELab::addSolutionToVTKWriter(vtkWriter, gfs, x);
+
     vtkWriter.write(argv[2]);
  }
  catch (Exception &e){

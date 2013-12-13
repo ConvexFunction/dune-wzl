@@ -108,7 +108,7 @@ public:
         if (inCOMPBlock) {
           unsigned rigidNode;
 
-          // SPC "kind of rigidness?" "number of rigid node" "bound degrees of freedom" "'unrigidness'"
+          // SPC "identifier" "number of rigid node" "bound degrees of freedom" "'unrigidness'"
           file >> _ >> rigidNode >> _ >> _;
 
           // Node numbers start by zero in DUNE
@@ -126,7 +126,7 @@ public:
         // Node numbers start by zero in DUNE
         force.push_back(std::make_pair(node-1, forceVec));
       }
-    } while (!keyword.empty() && keyword.compare("ENDDATA"));
+    } while (keyword.compare("ENDDATA") && !keyword.empty());
 
     // we are done with the file
     file.close();
