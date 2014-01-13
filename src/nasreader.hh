@@ -21,7 +21,6 @@
 
 
 // DOCUMENT
-// THROW SOMETHING OR WHATEVER IF AN ERROR IS ENCOUNTERED WHILE READING (?)
 
 template<typename ctype, typename GridType>
 class NasReader
@@ -34,11 +33,13 @@ private:
       getline(file, dummy);
     }
 
-    // extract keyword on current line, if we are not at the end of the file already
+    // extract keyword on current line, if nothing went wrong
     std::string keyword;
 
-    if (!file.eof())
+    if (file.good())
       file >> keyword;
+    else
+      DUNE_THROW(Dune::IOError, "File is not good.");
 
     return keyword;
   }
@@ -126,7 +127,7 @@ public:
         // Node numbers start by zero in DUNE
         force.push_back(std::make_pair(node-1, forceVec));
       }
-    } while (keyword.compare("ENDDATA") && !keyword.empty());
+    } while (keyword.compare("ENDDATA"));
 
     // we are done with the file
     file.close();

@@ -6,8 +6,10 @@
 #endif
 
 #include<iostream>
-#include<vector>
+#include<memory>
 #include<string>
+#include<sstream>
+#include<vector>
 
 #include<dune/common/exceptions.hh>
 #include<dune/common/fvector.hh>
@@ -16,7 +18,6 @@
 #include<dune/grid/yaspgrid.hh>
 #include<dune/grid/io/file/vtk/vtkwriter.hh>
 #include<dune/grid/uggrid.hh>
-//#include<dune/grid/alugrid.hh>
 
 #include<dune/istl/bvector.hh>
 #include<dune/istl/operators.hh>
@@ -30,20 +31,18 @@
 #include<dune/pdelab/gridfunctionspace/vectorgridfunctionspace.hh>
 #include<dune/pdelab/gridfunctionspace/gridfunctionspaceutilities.hh>
 #include<dune/pdelab/gridfunctionspace/interpolate.hh>
-#include <dune/pdelab/gridfunctionspace/vtk.hh>
+#include<dune/pdelab/gridfunctionspace/vtk.hh>
 #include<dune/pdelab/constraints/common/constraints.hh>
 #include<dune/pdelab/common/function.hh>
 #include<dune/pdelab/backend/istlvectorbackend.hh>
 #include<dune/pdelab/backend/istlmatrixbackend.hh>
 #include<dune/pdelab/backend/istlsolverbackend.hh>
-//#include<dune/pdelab/localoperator/laplacedirichletp12d.hh>
-//#include<dune/pdelab/localoperator/poisson.hh>
 #include<dune/pdelab/localoperator/linearelasticity.hh>
 #include<dune/pdelab/constraints/constraintsparameters.hh>
 #include<dune/pdelab/gridoperator/gridoperator.hh>
 
 #include "nasreader.hh"
-
+#include <H5Cpp.h>
 
 using namespace Dune;
 
@@ -63,10 +62,10 @@ typedef PDELab::VectorGridFunctionSpace<
   GridType::LeafGridView,
   FEM,
   dim,
-  PDELab::ISTLVectorBackend<>,
+  PDELab::ISTLVectorBackend<PDELab::ISTLParameters::static_blocking>,
   PDELab::ISTLVectorBackend<>,
   PDELab::ConformingDirichletConstraints,
-  PDELab::LexicographicOrderingTag,
+  PDELab::EntityBlockedOrderingTag,
   PDELab::DefaultLeafOrderingTag
   > GFS;
 
@@ -77,35 +76,6 @@ typedef GO::Traits::Domain V;
 typedef GO::Jacobian M;
 typedef M::BaseT ISTL_M;
 typedef V::BaseT ISTL_V;
-
-
-// function for defining the source term
-template<typename GV, typename RF>
-class ConstantFunction
-  : public PDELab::AnalyticGridFunctionBase<PDELab::AnalyticGridFunctionTraits<GV,RF,1>,
-                                                  ConstantFunction<GV,RF> >
-{
-public:
-  typedef PDELab::AnalyticGridFunctionTraits<GV,RF,1> Traits;
-  typedef PDELab::AnalyticGridFunctionBase<Traits,ConstantFunction<GV,RF> > BaseT;
-
-  ConstantFunction (const GV& gv, Real value) 
-  : BaseT(gv), value_(value)
-  {}
-  
-  void evaluateGlobal (const typename Traits::DomainType& x, 
-                       typename Traits::RangeType& y) const
-  {
-    y=value_;
-  }
-private:
-  typename Traits::RangeType value_;
-};
-
-
-//===============================================================
-// Define parameter functions f,g,j and \partial\Omega_D/N
-//===============================================================
 
 // constraints parameter class for selecting boundary condition type 
 template<typename GridView>
@@ -140,34 +110,32 @@ struct Dirichlet
 
 // Assemble the system
 template<typename GridView> 
-void assemble(const GridView& gridView,
-              const GFS& gfs,
-              ISTL_M& stiffnessMatrix,
-              ISTL_V& rhs,
-              const std::vector<bool>& boundaryMap)
+void assembleMatrix(const GridView& gridView,
+                  const Real& E, const Real& nu,
+                  const GFS& gfs,
+                  ISTL_M& stiffnessMatrix,
+                  const std::vector<bool>& boundaryMap)
 {
-    // make constraints map and initialize it from a function
+    // make constraints map and initialize it via a Dirichlet<GridView> object
     C cg;
     cg.clear();
 
     Dirichlet<GridView> bctype(boundaryMap, gridView);
     PDELab::constraints(bctype, gfs, cg);
 
+    // convert from nu, E to lame constants
+    const Real
+      lambda = (nu*E)/((1+nu)*(1-2*nu)),
+      mu = E/(2*(1+nu));
+
     // make grid operator
-    ConstantFunction<typename GridType::LeafGridView,Real> f(gridView, 1);
-
-    PDELab::LinearElasticity lop(3e5, 3e5, 0);
-
+    PDELab::LinearElasticity lop(lambda, mu, 0);
     GO go(gfs, cg, gfs, cg, lop);
 
-    // make coefficent vector and initialize it from a function
+    // make coefficient vector and initialize it from a function
+    // coefficient vector just zero here since A does not dependent on some parameter
     V x0(gfs);
     x0 = 0.0;
-
-    ConstantFunction<GridView,Real> g(gridView, 1);
-    PDELab::interpolate(g, gfs, x0);
-    //PDELab::set_shifted_dofs(cg, 0.0, x0);
-    PDELab::set_nonconstrained_dofs(cg, 0.0, x0);
 
     // represent operator as a matrix
     M m(go);
@@ -175,17 +143,14 @@ void assemble(const GridView& gridView,
 
     go.jacobian(x0, m);
 
-    // evaluate residual w.r.t initial guess
-    V r(gfs);
-    r = 0.0;
-
-    go.residual(x0, r);
-
-    // get actual matrices
+    // get actual matrix
     stiffnessMatrix = m.base();
-    rhs = r.base();
 }
 
+template<typename T>
+std::string toString(const T& t) {
+  return static_cast<std::ostringstream*>( &(std::ostringstream() << t) )->str();
+}
 
 int main(int argc, char** argv) try
 {
@@ -194,12 +159,15 @@ int main(int argc, char** argv) try
     // ////////////////////////////////
 
     if (argc < 2) {
-      std::cout << "dune-wzl in-file out-file" << std::endl;
+      std::cout << "dune-wzl in-file out-file (without file extensions)" << std::endl;
 
       return 1;
     }
 
-    std::cout << "Reading " << argv[1] << " ..." << std::endl;
+
+    //// Read the nas file
+    std::string nasFilename(argv[1]+std::string(".nas"));
+    std::cout << "Reading " << nasFilename << " ..." << std::endl;
 
     // Create and start timer
     Timer watch;
@@ -210,7 +178,7 @@ int main(int argc, char** argv) try
     std::vector<unsigned> rigidNodes;
     std::vector<std::pair<unsigned, GlobalVector> > forces;
 
-    NasReader<Real, GridType>::read(argv[1], grid, rigidNodes, forces);
+    NasReader<Real, GridType>::read(nasFilename, grid, rigidNodes, forces);
 
     // Convert nodes to bitmaps
     std::vector<bool> rigidNodeMap(grid->size(dim));
@@ -227,66 +195,125 @@ int main(int argc, char** argv) try
     for (int i = 0; i < forces.size(); ++i)
       forceMap[forces[i].first] = true;
 
-
     // Output how long reading the file took us
     watch.stop();
     std::cout << "Reading and setting up vectors took " << watch.lastElapsed() << " seconds." << std::endl;
-    std::cout << "Now setting up the stiffness matrix and the right hand side ..." << std::endl;
-    watch.start();
 
-    // assemble problem
-    FEM fem;
-    GFS gfs(grid->leafView(), fem);
-    gfs.name("displacement");
-  
-    ISTL_M stiffnessMatrix;
-    ISTL_V rhs;
-
-    assemble(grid->leafView(), gfs, stiffnessMatrix, rhs, rigidNodeMap);
-
-    // Output how long setting up the matrices took us
-    watch.stop();
-    std::cout << "Assembling the stiffness matrix and setting up the right hand side took " << watch.lastElapsed() << " seconds." << std::endl;
-    std::cout << "Now computing the solution ..." << std::endl;
-    watch.start();
-
-    // /////////////////////////
-    //   Compute solution
-    // /////////////////////////
-
-    // Object storing some statistics about the solving process
-    InverseOperatorResult statistics;
-
-    // Solve!
-    /*
-    MatrixAdapter<ISTL_M,ISTL_V,ISTL_V> opa(stiffnessMatrix);
-    SeqILU0<ISTL_M,ISTL_V,ISTL_V> ilu0(stiffnessMatrix,1e-2);
-    CGSolver<ISTL_V> solver(opa,ilu0,1E-4,150,2);
-    */
-
-    std::cout << "   Elapsed time before calling UMFPack constructor: "<< watch.elapsed() << std::endl;
-    UMFPack<ISTL_M> solver(stiffnessMatrix);
-    std::cout << "   Elapsed time after calling UMFPack constructor: " << watch.elapsed() << std::endl;
-
-    V x(gfs, 0);
-    solver.apply(x, rhs, statistics);
-    std::cout << "   Elapsed time after apply: " << watch.elapsed() << std::endl;
-
-    // Read our stopwatch for a last time
-    watch.stop();
-    std::cout << "Getting the solution took " << watch.lastElapsed() << " seconds." << std::endl;
-    std::cout << "Total time: " << watch.elapsed() << " seconds." << std::endl;
-
-    // Output
+    // Prepare vtkWriter
     VTKWriter<GridType::LeafGridView> vtkWriter(grid->leafView());
 
     vtkWriter.addVertexData(rigidNodeMap, "rigid");
     vtkWriter.addVertexData(forceMap, "force");
-    PDELab::addSolutionToVTKWriter(vtkWriter, gfs, x);
 
+    //// Read file from WZL
+    std::string h5Filename(argv[1]+std::string(".h5"));
+    std::cout << "Reading " << h5Filename << " ..." << std::endl;
+
+    H5::H5File h5file(h5Filename, H5F_ACC_RDONLY);
+
+    // Read parameter data
+    Real param[2];
+    h5file.openDataSet("Werkstoffmodell/E-Modul_Querkontraktion").read(param, H5::PredType::NATIVE_DOUBLE);
+     std::cout << "   Using: E=" << param[0] << " and nu=" << param[1] << std::endl;
+
+    // Read solution
+    H5::DataSet solution_dataset = h5file.openDataSet("Knoten/Knotenverschiebungen");
+
+    std::vector<hsize_t> solution_start(3, 0), solution_size(3), solution_count(3);
+
+    // I don't get how DataSpaces are supposed to work.
+
+    // H5::DataSpace memspace(solution_dataset.getSpace());
+    H5::DataSpace dataspace(solution_dataset.getSpace());
+    dataspace.getSimpleExtentDims(solution_size.data(), NULL);
+    // solution_count[0] = 1; solution_count[1] = 1; solution_count[2] = solution_size[2];
+    // memspace.selectHyperslab(H5S_SELECT_SET, solution_count.data(), solution_start.data());
+
+    // Workaround: Just pull out all the data.
+    std::vector<Real> full_wzl(solution_size[0] * solution_size[1] * solution_size[2]);
+    solution_dataset.read(full_wzl.data(), H5::PredType::NATIVE_DOUBLE); //, memspace, dataspace);
+
+    std::vector<std::vector<std::vector<Real> > > wzl(solution_size[0]);
+
+    for (size_t k = 0; k < solution_size[0]; ++k, ++solution_start[0]) {
+      wzl[k].resize(solution_size[1]);
+
+      for (size_t l = 0; l < solution_size[1]; ++l, ++solution_start[1]) {
+        // dataspace.selectHyperslab(H5S_SELECT_SET, solution_count.data(), solution_start.data());
+        wzl[k][l] = std::vector<Real>(&full_wzl[static_cast<size_t>((k*solution_size[1]+l)    *solution_size[2])],
+                                      &full_wzl[static_cast<size_t>((k*solution_size[1]+(l+1))*solution_size[2])]);
+
+        vtkWriter.addVertexData(wzl[k][l], "wzl_solution_" + toString(k) + "_[" + toString(l) + "]");
+      }
+    }
+
+    full_wzl.resize(0);
+
+    h5file.close();
+
+    std::cout << "Done" << std::endl;
+
+    // Assemble problem
+    std::cout << "Now setting up the stiffness matrix ..." << std::endl;
+    watch.start();
+
+    FEM fem;
+    GFS gfs(grid->leafView(), fem);
+
+    ISTL_M stiffnessMatrix;
+    assembleMatrix(grid->leafView(), param[0], param[1], gfs, stiffnessMatrix, rigidNodeMap);
+
+    // Output how long setting up the matrices took us
+    watch.stop();
+    std::cout << "Assembling the stiffness matrix took " << watch.lastElapsed() << " seconds." << std::endl;
+
+    // //////////////es///////////
+    //   Compute solution
+    // /////////////////////////
+    
+    std::cout << "Now computing the solutions ..." << std::endl;
+    watch.start();
+
+    // Solve!
+
+    // Create a solver
+    std::cout << "   Elapsed time before calling UMFPack constructor: "<< watch.elapsed() << std::endl;
+    UMFPack<ISTL_M> solver(stiffnessMatrix);
+    std::cout << "   Elapsed time after calling UMFPack constructor: " << watch.elapsed() << std::endl;
+
+    // Object storing some statistics about the solving process
+    InverseOperatorResult statistics;
+
+    // Apply the solver
+    std::vector<std::shared_ptr<V> > x(forces.size());
+    ISTL_V rhs(V(gfs).base());
+
+    for (size_t k = 0; k < forces.size(); ++k) {
+      x[k] = std::shared_ptr<V>(new V(gfs, 0));
+
+      gfs.name("solution_" + toString(k));
+
+      rhs = 0;
+      rhs[forces[k].first] = forces[k].second;
+
+      solver.apply(*(x[k]), rhs, statistics);
+
+      // Test: Calculate rhs -= A*x
+      stiffnessMatrix.mmv((*x[k]).base(), rhs);
+      std::cout << "   Test " << k << ": " << sqrt(rhs*rhs) << std::endl;
+
+      PDELab::addSolutionToVTKWriter(vtkWriter, gfs, *(x[k]));
+    }
+
+    // Done.
+    watch.stop();
+    std::cout << "Getting the solutions took " << watch.lastElapsed() << " seconds." << std::endl;
+    std::cout << "Total time: " << watch.elapsed() << " seconds." << std::endl;
+
+    //// Output
     vtkWriter.write(argv[2]);
  }
  catch (Exception &e){
-   std::cerr << "Dune reported error: " << e << std::endl;
+   std::cerr << "Error: " << e << std::endl;
    return 1;
  }
