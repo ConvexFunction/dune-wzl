@@ -23,6 +23,7 @@
 *.out
 *.app
 
+src/dune_wzl
 
 ### Autotools
 Makefile.in
@@ -36,12 +37,31 @@ Makefile.in
 /missing
 /stamp-h1
 
+am
+config.guess
+config.h
+config.h.in
+config.log
+config.lt
+config.status
+config.sub
+dependencies.m4
+doc/doxygen/Doxyfile
+doc/doxygen/Doxyfile.in
+dune-wzl.pc
+libtool
+ltmain.sh
+src/.deps/
+
 ### cmake
 CMakeCache.txt
 CMakeFiles
 Makefile
 cmake_install.cmake
 install_manifest.txt
+
+### simulation results
+*.vtu
 
 ### Temporary files
 # -*- mode: gitignore; -*-
