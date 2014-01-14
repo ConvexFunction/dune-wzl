@@ -6,7 +6,9 @@ dnl -*- autoconf -*-
 # Additional checks needed to build dune-wzl
 # This macro should be invoked by every module which depends on dune-wzl, as
 # well as by dune-wzl itself
-AC_DEFUN([DUNE_WZL_CHECKS])
+AC_DEFUN([DUNE_WZL_CHECKS],[
+  AC_REQUIRE([DUNE_PATH_HDF5])
+])
 
 # Additional checks needed to find dune-wzl
 # This macro should be invoked by every module which depends on dune-wzl, but
