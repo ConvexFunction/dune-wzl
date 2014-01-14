@@ -10,6 +10,7 @@ dune_wzl_CPPFLAGS = $(AM_CPPFLAGS) \
 	$(UG_CPPFLAGS) \
 	$(AMIRAMESH_CPPFLAGS) \
 	$(ALBERTA_CPPFLAGS) \
+	$(UMFPACK_CPPFLAGS) \
 	$(ALUGRID_CPPFLAGS)
 # The libraries have to be given in reverse order (most basic libraries
 # last).  Also, due to some misunderstanding, a lot of libraries include the
@@ -19,6 +20,7 @@ dune_wzl_LDADD = \
 	$(DUNE_LDFLAGS) $(DUNE_LIBS) \
 	$(ALUGRID_LDFLAGS) $(ALUGRID_LIBS) \
 	$(ALBERTA_LDFLAGS) $(ALBERTA_LIBS) \
+	$(UMFPACK_LIBS) \
 	$(AMIRAMESH_LDFLAGS) $(AMIRAMESH_LIBS) \
 	$(UG_LDFLAGS) $(UG_LIBS) \
 	$(DUNEMPILIBS)	\
@@ -28,6 +30,7 @@ dune_wzl_LDFLAGS = $(AM_LDFLAGS) \
 	$(UG_LDFLAGS) \
 	$(AMIRAMESH_LDFLAGS) \
 	$(ALBERTA_LDFLAGS) \
+	$(UMFPACK_LDFLAGS) \
 	$(ALUGRID_LDFLAGS) \
 	$(DUNE_LDFLAGS)
 
