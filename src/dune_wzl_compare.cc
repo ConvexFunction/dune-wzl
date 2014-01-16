@@ -114,23 +114,19 @@ std::string toString(const T& t) {
 }
 
 void print_usage() {
-  std::cout << "dune-wzl -i in-file -o out-file"                                               << std::endl
+  std::cout << "dune-wzl -i infile -o outfile"                                                 << std::endl
             << "         filenames without file extensions"                                    << std::endl
-            << "-i filename: read from filename.nas"                                           << std::endl
-            << "-o filename: output to filename.h5"                                            << std::endl
-            << "-E x: use E=x"                                                                 << std::endl
-            << "-n x: use nu=x"                                                                << std::endl;
-
+            << "-i infile : read from infile.nas and infile.h5"                                << std::endl
+            << "-o outfile: output to outfile.h5"                                              << std::endl;
 }
 
 int main(int argc, char** argv) try
 {
   // //////////////////////////////// Read command line ////////////////////////////////
   std::string inName, outName;
-  double E(0), nu(0);
 
   int opt;
-  while ((opt = getopt(argc, argv, ":i:o:E:n:")) != EOF) {
+  while ((opt = getopt(argc, argv, ":i:o:")) != EOF) {
     switch (opt) {
     case 'i':
       inName = optarg;
@@ -138,57 +134,111 @@ int main(int argc, char** argv) try
     case 'o':
       outName = optarg;
       break;
-    case 'E':
-      std::stringstream(optarg) >> E;
-      break;
-    case 'n':
-      std::stringstream(optarg) >> nu;
-      break;
     default:
       print_usage();
       throw std::runtime_error("Passed unknown argument.");
     }
   }
 
-  if (inName.empty() or outName.empty()) {
-    print_usage();
+  if (inName.empty() or outName.empty())
     throw std::runtime_error("Missing filename for input or output.");
-  }
 
-  if (E < 0 or nu < 0) {
-    print_usage();
-    throw std::runtime_error("Invalid value for E or nu.");
-  }
 
   // //////////////////////////////// Create and start timer ////////////////////////////////
   Timer watch;
+
 
   // //////////////////////////////// Read nas file ////////////////////////////////
   std::string nasFilename(inName+std::string(".nas"));
   std::cout << "Reading " << nasFilename << " ..." << std::endl;
 
-  // Create grid by reading *.nas file
-  GridType* grid;
-
   std::vector<unsigned> rigidNodes;
   std::vector<std::pair<unsigned, GlobalVector> > forces;
 
+  // Create grid by reading *.nas file
+  GridType* grid;
+
   NasReader<double, GridType>::read(nasFilename, grid, rigidNodes, forces);
 
-  // Create bitmap for boundary nodes
+  // Convert nodes to bitmaps
   std::vector<bool> rigidNodeMap(grid->size(dim), 0);
 
   for (size_t i = 0; i < rigidNodes.size(); ++i)
     rigidNodeMap[rigidNodes[i]] = true;
 
+  std::vector<bool> forceMap(grid->size(dim), 0);
+
+  for (size_t i = 0; i < forces.size(); ++i)
+    forceMap[forces[i].first] = true;
+
   watch.stop();
   std::cout << "Reading and setting up vectors took " << watch.lastElapsed() << " seconds." << std::endl;
+
+  // //////////////////////////////// Prepare vtkWriter ////////////////////////////////
+  VTKWriter<GridType::LeafGridView> vtkWriter(grid->leafView());
+
+  vtkWriter.addVertexData(rigidNodeMap, "rigid");
+  vtkWriter.addVertexData(forceMap, "force");
+
+
+  // //////////////////////////////// Read file from WZL ////////////////////////////////
+  std::string h5Filename(inName+std::string(".h5"));
+  std::cout << "Reading " << h5Filename << " ..." << std::endl;
+
+  H5::H5File h5file(h5Filename, H5F_ACC_RDONLY);
+
+  // Read parameter data
+  double param[2];
+
+  H5::DataSet param_dataset(h5file.openDataSet("Werkstoffmodell/E-Modul_Querkontraktion"));
+  param_dataset.read(param, H5::PredType::NATIVE_DOUBLE);
+
+  const double E = param[0], nu = param[1];
+  std::cout << "   Using: E=" << E << " and nu=" << nu << std::endl;
+
+  // Read solution
+  H5::DataSet solution_dataset(h5file.openDataSet("Knoten/Knotenverschiebungen"));
+
+  std::vector<hsize_t> solution_start(3, 0), solution_size(3), solution_count(3);
+
+  // Create file dataspace and get the dimensions of the array stored in the file
+  H5::DataSpace dataspace(solution_dataset.getSpace());
+  dataspace.getSimpleExtentDims(solution_size.data(), NULL);
+
+  // Set size of slab that will be read into memory
+  solution_count[0] = 1;
+  solution_count[1] = 1;
+  solution_count[2] = solution_size[2];
+
+  // Create dataspace for data in memory
+  H5::DataSpace memspace(3, solution_count.data());
+  memspace.selectHyperslab(H5S_SELECT_SET, solution_count.data(), solution_start.data());
+
+  std::vector<std::vector<std::vector<double> > > wzl(solution_size[0]);
+
+  for (hsize_t& k = solution_start[0]; k < solution_size[0]; ++k) {
+    wzl[k].resize(solution_size[1]);
+
+    for (hsize_t& l = solution_start[1] = 0; l < solution_size[1]; ++l) {
+      wzl[k][l].resize(solution_size[2]);
+
+      dataspace.selectHyperslab(H5S_SELECT_SET, solution_count.data(), solution_start.data());
+      solution_dataset.read(wzl[k][l].data(), H5::PredType::NATIVE_DOUBLE, memspace, dataspace);
+      
+      vtkWriter.addVertexData(wzl[k][l], "wzl_solution_"+toString(k)+"["+toString(l)+"]");
+    }
+  }
+
+  h5file.close();
+
+  std::cout << "Done" << std::endl;
+
 
   // //////////////////////////////// Assemble problem ////////////////////////////////
   std::cout << "Now setting up the stiffness matrix ..." << std::endl;
   watch.start();
 
-  // Setup grid function space
+  // Prepare Grid Function Space
   FEM fem;
   GFS gfs(grid->leafView(), fem);
 
@@ -230,7 +280,7 @@ int main(int argc, char** argv) try
   // //////////////////////////////// Compute solution ////////////////////////////////
   std::cout << "Now computing the solutions ..." << std::endl;
 
-  ///// Create a solver
+  //// Create a solver
   std::cout << "   Calling UMFPack constructor ... " << std::endl;
   watch.start();
   UMFPack<ISTL_M> solver(stiffnessMatrix);
@@ -238,53 +288,31 @@ int main(int argc, char** argv) try
   std::cout << "   Calling the UMFPack constructor took " << watch.lastElapsed() << " seconds." << std::endl;
   watch.start();
 
-  ///// H5 file storing the results
-  H5::H5File h5OutFile(outName+std::string(".h5"), H5F_ACC_TRUNC);
-
-  // Various variables necessary for writing the solutions via h5
-  const double fillvalue = 0;
-  H5::DSetCreatPropList plist;
-  plist.setFillValue(H5::PredType::NATIVE_DOUBLE, &fillvalue);
-
-  // Create dataspace for file
-  const hsize_t dune_all_solution_size[3] = {forces.size(), dim, grid->size(dim)};
-  H5::DataSpace out_space(3, dune_all_solution_size);
-  H5::DataSet out_dataset(h5OutFile.createDataSet("Dune Solution", H5::PredType::NATIVE_DOUBLE, out_space, plist));
-
-  hsize_t dune_solution_start[3] = {0, 0, 0};
-
-  // Create dataspace for data in memory
-  const hsize_t dune_single_solution_size[3] = {1, dim, grid->size(dim)};
-  H5::DataSpace mem_out_space(3, dune_single_solution_size);
-  mem_out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
-
   ///// Apply the solver
-  V x(gfs);
+  std::vector<std::shared_ptr<V> > x(solution_size[0]);
   ISTL_V rhs(V(gfs).base());
 
   // Object storing some statistics about the solving process
   InverseOperatorResult statistics;
 
-  for (hsize_t& k = dune_solution_start[0]; k < forces.size(); ++k) {
-    x = 0;
+  for (size_t k = 0; k < forces.size(); ++k) {
+    x[k] = std::shared_ptr<V>(new V(gfs, 0));
 
     rhs = 0;
     rhs[forces[k].first] = forces[k].second;
 
-    solver.apply(x, rhs, statistics);
+    solver.apply(*x[k], rhs, statistics);
 
-    out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
-    out_dataset.write(&(x.base()[0][0]), H5::PredType::NATIVE_DOUBLE, mem_out_space, out_space);
+    gfs.name("dune_solution_" + toString(k));
+    PDELab::addSolutionToVTKWriter(vtkWriter, gfs, *x[k]);
   }
 
-  h5OutFile.close();
+  vtkWriter.write(outName);
 
   // Done.
   watch.stop();
-  std::cout << "Getting the solutions from decomposed matrix and writing the H5 file took " << watch.lastElapsed() << " seconds." << std::endl;
+  std::cout << "Getting the solutions from decomposed matrix and writing the VTU file took " << watch.lastElapsed() << " seconds." << std::endl;
   std::cout << "Total time: " << watch.elapsed() << " seconds." << std::endl;
-
-  return 0;
  }
  catch (Exception &e){
    std::cerr << "Error: " << e << std::endl;
