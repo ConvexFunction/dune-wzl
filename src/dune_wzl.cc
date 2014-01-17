@@ -289,17 +289,24 @@ int main(int argc, char** argv) try
   H5::DSetCreatPropList plist;
   plist.setFillValue(H5::PredType::NATIVE_DOUBLE, &fillvalue);
 
-  // Create dataspace for file
-  const hsize_t dune_all_solution_size[3] = {forces.size(), dim, grid->size(dim)};
-  H5::DataSpace out_space(3, dune_all_solution_size);
+  // setup arrays for hdf5 output
+  hsize_t dune_file_solution_start[3] = {0, 0, 0};
+
+  const hsize_t
+    dune_file_solution_size[3] = {forces.size(), dim, grid->size(dim)},
+    dune_file_output_size[3] = {1, 1, grid->size(dim)},
+
+    dune_mem_solution_size[2] = {grid->size(dim), dim},
+    dune_mem_output_size[2] = {grid->size(dim), 1},
+    dune_mem_solution_start[2] = {0, 0};
+
+  // create dataspace and dataset for file
+  H5::DataSpace out_space(3, dune_file_solution_size);
   H5::DataSet out_dataset(h5OutFile.createDataSet("Dune Solution", H5::PredType::NATIVE_DOUBLE, out_space, plist));
 
-  hsize_t dune_solution_start[3] = {0, 0, 0};
-
-  // Create dataspace for data in memory
-  const hsize_t dune_single_solution_size[3] = {1, dim, grid->size(dim)};
-  H5::DataSpace mem_out_space(3, dune_single_solution_size);
-  mem_out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
+  // create dataspace for memory
+  H5::DataSpace mem_space(2, dune_mem_solution_size);
+  mem_space.selectHyperslab(H5S_SELECT_SET, dune_mem_output_size, dune_mem_solution_start);
 
   ///// Apply the solver
   std::cout << "Now solving linear systems" << std::endl;
@@ -313,7 +320,7 @@ int main(int argc, char** argv) try
   // Timer for progress indication
   Timer intervalTimer;
 
-  for (hsize_t& k = dune_solution_start[0]; k < forces.size(); ++k) {
+  for (hsize_t& k = dune_file_solution_start[0]; k < forces.size(); ++k) {
     x = 0;
 
     rhs = 0;
@@ -321,8 +328,14 @@ int main(int argc, char** argv) try
 
     solver.apply(x, rhs, statistics);
 
-    out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
-    out_dataset.write(&(x[0][0]), H5::PredType::NATIVE_DOUBLE, mem_out_space, out_space);
+    // save results
+    for (hsize_t& l = dune_file_solution_start[1] = 0; l < dim; ++l) {
+      out_space.selectHyperslab(H5S_SELECT_SET, dune_file_output_size, dune_file_solution_start);
+      out_dataset.write(&(x[0][l]), H5::PredType::NATIVE_DOUBLE, mem_space, out_space);
+    }
+
+    // assure data is written to file
+    h5OutFile.flush(H5F_SCOPE_GLOBAL);
 
     // Progress indication every 2 seconds
     if (intervalTimer.elapsed() > 2) {
