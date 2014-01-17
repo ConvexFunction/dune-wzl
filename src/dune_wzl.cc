@@ -29,7 +29,7 @@
 #include<dune/istl/io.hh>
 #include<dune/istl/umfpack.hh>
 
-#include<dune/pdelab/finiteelementmap/q1fem.hh>
+#include<dune/pdelab/finiteelementmap/qkfem.hh>
 #include<dune/pdelab/constraints/conforming.hh>
 #include<dune/pdelab/gridfunctionspace/vectorgridfunctionspace.hh>
 #include<dune/pdelab/gridfunctionspace/gridfunctionspaceutilities.hh>
@@ -125,9 +125,9 @@ private:
 
 
 // PDELab types we need
-typedef PDELab::Q1LocalFiniteElementMap<double,double,dim> FEM;
+typedef PDELab::QkLocalFiniteElementMap<GV,double,double,dim> FEM;
 typedef PDELab::VectorGridFunctionSpace<
-  GridType::LeafGridView,
+  GV,
   FEM,
   dim,
   PDELab::ISTLVectorBackend<PDELab::ISTLParameters::static_blocking>,
@@ -242,7 +242,7 @@ int main(int argc, char** argv) try
   Model model(grid->leafView(), rigidNodeMap, lambda, mu);
 
   // setup grid function space
-  FEM fem;
+  FEM fem(grid->leafView());
   GFS gfs(grid->leafView(), fem);
 
   // create constraints container
