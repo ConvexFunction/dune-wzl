@@ -227,15 +227,12 @@ int main(int argc, char** argv) try
   std::cout << "Assembling the stiffness matrix took " << watch.lastElapsed() << " seconds." << std::endl;
 
 
-  // //////////////////////////////// Compute solution ////////////////////////////////
-  std::cout << "Now computing the solutions ..." << std::endl;
-
   ///// Create a solver
-  std::cout << "   Calling UMFPack constructor ... " << std::endl;
+  std::cout << "Factorizing matrix using UMFPack ... " << std::endl;
   watch.start();
   UMFPack<ISTL_M> solver(stiffnessMatrix);
   watch.stop();
-  std::cout << "   Calling the UMFPack constructor took " << watch.lastElapsed() << " seconds." << std::endl;
+  std::cout << "Factorization took " << watch.lastElapsed() << " seconds." << std::endl;
   watch.start();
 
   ///// H5 file storing the results
@@ -259,11 +256,16 @@ int main(int argc, char** argv) try
   mem_out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
 
   ///// Apply the solver
+  std::cout << "Now solving linear systems" << std::endl;
+
   ISTL_V x(V(gfs).base());
   ISTL_V rhs(V(gfs).base());
 
   // Object storing some statistics about the solving process
   InverseOperatorResult statistics;
+
+  // Timer for progress indication
+  Timer intervalTimer;
 
   for (hsize_t& k = dune_solution_start[0]; k < forces.size(); ++k) {
     x = 0;
@@ -275,6 +277,12 @@ int main(int argc, char** argv) try
 
     out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
     out_dataset.write(&(x[0][0]), H5::PredType::NATIVE_DOUBLE, mem_out_space, out_space);
+
+    // Progress indication every 2 seconds
+    if (intervalTimer.elapsed() > 2) {
+      std::cout << "Solved " << k << " linear systems in " << watch.elapsed() << " seconds." << std::endl;
+      intervalTimer.reset();
+    }
   }
 
   h5OutFile.close();
