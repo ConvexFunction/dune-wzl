@@ -49,48 +49,37 @@
 
 using namespace Dune;
 
+// we have a 3-dimensional problem
 const int dim = 3;
 
+// general typedefs
 typedef BlockVector<FieldVector<double,dim> > VectorType;
 typedef BCRSMatrix<FieldMatrix<double,dim,dim> > MatrixType;
 typedef FieldVector<double, dim> GlobalVector;
 
 typedef UGGrid<dim> GridType;
-
-typedef PDELab::Q1LocalFiniteElementMap<double,double,dim> FEM;
-typedef PDELab::VectorGridFunctionSpace<
-  GridType::LeafGridView,
-  FEM,
-  dim,
-  PDELab::ISTLVectorBackend<PDELab::ISTLParameters::static_blocking>,
-  PDELab::ISTLVectorBackend<>,
-  PDELab::ConformingDirichletConstraints,
-  PDELab::EntityBlockedOrderingTag,
-  PDELab::DefaultLeafOrderingTag
-  > GFS;
-
-typedef GFS::ConstraintsContainer<double>::Type C;
-
-typedef PDELab::GridOperator<GFS,GFS,PDELab::LinearElasticity,PDELab::ISTLMatrixBackend,double,double,double,C,C> GO;
-typedef GO::Traits::Domain V;
-typedef GO::Jacobian M;
-typedef M::BaseT ISTL_M;
-typedef V::BaseT ISTL_V;
+typedef GridType::LeafGridView GV;
 
 // constraints parameter class for selecting boundary condition type 
-template<typename GridView>
-struct Dirichlet
-  : public PDELab::DirichletConstraintsParameters
+class Model
+  : public Dune::PDELab::LinearElasticityParameterInterface<
+  Dune::PDELab::LinearElasticityParameterTraits<GV, double>,
+  Model >
 {
-  const std::vector<bool>& boundaryMap;
-  const GridView& gridView;
+public:
+  typedef Dune::PDELab::LinearElasticityParameterTraits<GV, double> Traits;
 
-  Dirichlet(const std::vector<bool>& map, const GridView& gv) : boundaryMap(map), gridView(gv) {}
+  Model(const GV& gv,
+        const std::vector<bool>& rigidNodesMap,
+        Traits::RangeFieldType l,
+        Traits::RangeFieldType m) :
+    gridView(gv), boundaryMap(rigidNodesMap), G_(0), lambda_(l), mu_(m)
+  {}
 
   template<typename Intersection>
   bool isDirichlet(const Intersection& intersection,
-                   const FieldVector<typename Intersection::ctype, Intersection::dimension-1> & coord
-                  ) const
+                   const typename Traits::IntersectionDomainType & coord
+                   ) const
   {
     bool isBoundary = true;
 
@@ -105,7 +94,63 @@ struct Dirichlet
 
     return isBoundary;
   }
+
+  void
+  u (const Traits::ElementType& e, const Traits::DomainType& x,
+     Traits::RangeType & y) const
+  {
+    y = 0.0;
+  }
+
+  Traits::RangeFieldType
+  lambda (const Traits::ElementType& e, const Traits::DomainType& x) const
+  {
+    return lambda_;
+  }
+
+  Traits::RangeFieldType
+  mu (const Traits::ElementType& e, const Traits::DomainType& x) const
+  {
+    return mu_;
+  }
+
+private:
+  const GV& gridView;
+  const std::vector<bool>& boundaryMap;
+
+  Traits::RangeType G_;
+  Traits::RangeFieldType lambda_;
+  Traits::RangeFieldType mu_;
 };
+
+
+// PDELab types we need
+typedef PDELab::Q1LocalFiniteElementMap<double,double,dim> FEM;
+typedef PDELab::VectorGridFunctionSpace<
+  GridType::LeafGridView,
+  FEM,
+  dim,
+  PDELab::ISTLVectorBackend<PDELab::ISTLParameters::static_blocking>,
+  PDELab::ISTLVectorBackend<>,
+  PDELab::ConformingDirichletConstraints,
+  PDELab::EntityBlockedOrderingTag,
+  PDELab::DefaultLeafOrderingTag
+  > GFS;
+
+typedef GFS::ConstraintsContainer<double>::Type C;
+
+typedef PDELab::GridOperator<
+  GFS,
+  GFS,
+  PDELab::LinearElasticity<Model>,
+  PDELab::ISTLMatrixBackend,
+  double,double,double, C,C> GO;
+
+typedef GO::Traits::Domain V;
+typedef GO::Jacobian M;
+typedef M::BaseT ISTL_M;
+typedef V::BaseT ISTL_V;
+
 
 // Helper function for converting numbers to strings
 template<typename T>
@@ -188,24 +233,25 @@ int main(int argc, char** argv) try
   std::cout << "Now setting up the stiffness matrix ..." << std::endl;
   watch.start();
 
-  // Setup grid function space
-  FEM fem;
-  GFS gfs(grid->leafView(), fem);
-
-  // make constraints map and initialize it via a Dirichlet<GridView> object
-  C cg;
-  cg.clear();
-
-  Dirichlet<GridType::LeafGridView> bctype(rigidNodeMap, grid->leafView());
-  PDELab::constraints(bctype, gfs, cg);
-
   // convert from nu, E to lame constants
   const double
     lambda = (nu*E)/((1+nu)*(1-2*nu)),
     mu = E/(2*(1+nu));
 
+  // create the model describing our problem
+  Model model(grid->leafView(), rigidNodeMap, lambda, mu);
+
+  // setup grid function space
+  FEM fem;
+  GFS gfs(grid->leafView(), fem);
+
+  // create constraints container
+  C cg;
+  cg.clear();
+  PDELab::constraints(model, gfs, cg);
+
   // make grid operator
-  PDELab::LinearElasticity lop(lambda, mu, 0);
+  PDELab::LinearElasticity<Model> lop(model);
   GO go(gfs, cg, gfs, cg, lop);
 
   // make coefficient vector and initialize it from a function
