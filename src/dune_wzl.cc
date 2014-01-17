@@ -200,7 +200,7 @@ int main(int argc, char** argv) try
     throw std::runtime_error("Missing filename for input or output.");
   }
 
-  if (E < 0 or nu < 0) {
+  if (E <= 0 or nu <= 0) {
     print_usage();
     throw std::runtime_error("Invalid value for E or nu.");
   }
