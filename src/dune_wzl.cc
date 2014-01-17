@@ -125,7 +125,7 @@ private:
 
 
 // PDELab types we need
-typedef PDELab::QkLocalFiniteElementMap<GV,double,double,dim> FEM;
+typedef PDELab::QkLocalFiniteElementMap<GV,double,double,1> FEM;
 typedef PDELab::VectorGridFunctionSpace<
   GV,
   FEM,
