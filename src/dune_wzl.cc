@@ -259,7 +259,7 @@ int main(int argc, char** argv) try
   mem_out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
 
   ///// Apply the solver
-  V x(gfs);
+  ISTL_V x(V(gfs).base());
   ISTL_V rhs(V(gfs).base());
 
   // Object storing some statistics about the solving process
@@ -274,7 +274,7 @@ int main(int argc, char** argv) try
     solver.apply(x, rhs, statistics);
 
     out_space.selectHyperslab(H5S_SELECT_SET, dune_single_solution_size, dune_solution_start);
-    out_dataset.write(&(x.base()[0][0]), H5::PredType::NATIVE_DOUBLE, mem_out_space, out_space);
+    out_dataset.write(&(x[0][0]), H5::PredType::NATIVE_DOUBLE, mem_out_space, out_space);
   }
 
   h5OutFile.close();
