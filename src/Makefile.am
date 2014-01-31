@@ -1,7 +1,7 @@
 
 SUBDIRS =
 
-noinst_PROGRAMS = dune_wzl
+noinst_PROGRAMS = dune_wzl dune_wzl_compare
 
 dune_wzl_SOURCES = dune_wzl.cc
 
@@ -30,6 +30,27 @@ dune_wzl_LDFLAGS = $(AM_LDFLAGS) \
 	$(UG_LDFLAGS) \
 	$(AMIRAMESH_LDFLAGS) \
 	$(ALBERTA_LDFLAGS) \
+	$(UMFPACK_LDFLAGS) \
+	$(ALUGRID_LDFLAGS) \
+	$(DUNE_LDFLAGS)
+
+dune_wzl_compare_SOURCES = dune_wzl_compare.cc
+
+dune_wzl_compare_CPPFLAGS = $(AM_CPPFLAGS) \
+	$(DUNEMPICPPFLAGS) \
+	$(UG_CPPFLAGS) \
+	$(UMFPACK_CPPFLAGS) \
+	$(ALUGRID_CPPFLAGS)
+dune_wzl_compare_LDADD = \
+	$(DUNE_LDFLAGS) $(DUNE_LIBS) \
+	$(ALUGRID_LDFLAGS) $(ALUGRID_LIBS) \
+	$(UMFPACK_LIBS) \
+	$(UG_LDFLAGS) $(UG_LIBS) \
+	$(DUNEMPILIBS)	 -lhdf5_cpp -lhdf5 \
+	$(LDADD)
+dune_wzl_compare_LDFLAGS = $(AM_LDFLAGS) \
+	$(DUNEMPILDFLAGS) \
+	$(UG_LDFLAGS) \
 	$(UMFPACK_LDFLAGS) \
 	$(ALUGRID_LDFLAGS) \
 	$(DUNE_LDFLAGS)
