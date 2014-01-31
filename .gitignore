@@ -24,6 +24,7 @@
 *.app
 
 src/dune_wzl
+src/dune_wzl_compare
 
 ### Autotools
 Makefile.in
