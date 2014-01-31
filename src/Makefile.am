@@ -23,7 +23,7 @@ dune_wzl_LDADD = \
 	$(UMFPACK_LIBS) \
 	$(AMIRAMESH_LDFLAGS) $(AMIRAMESH_LIBS) \
 	$(UG_LDFLAGS) $(UG_LIBS) \
-	$(DUNEMPILIBS)	\
+	$(DUNEMPILIBS)   -lhdf5_cpp -lhdf5 \
 	$(LDADD)
 dune_wzl_LDFLAGS = $(AM_LDFLAGS) \
 	$(DUNEMPILDFLAGS) \
