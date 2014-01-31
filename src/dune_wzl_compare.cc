@@ -187,9 +187,10 @@ int main(int argc, char** argv) try
     }
   }
 
-  if (inName.empty() or outName.empty())
+  if (inName.empty() or outName.empty()) {
+    print_usage();
     throw std::runtime_error("Missing filename for input or output.");
-
+  }
 
   // //////////////////////////////// Create and start timer ////////////////////////////////
   Timer watch;
