@@ -167,6 +167,8 @@ void print_usage() {
 
 int main(int argc, char** argv) try
 {
+  Dune::MPIHelper::instance(argc, argv);
+
   // //////////////////////////////// Read command line ////////////////////////////////
   std::string inName, outName;
 
