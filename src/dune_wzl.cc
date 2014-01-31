@@ -159,7 +159,7 @@ std::string toString(const T& t) {
 }
 
 void print_usage() {
-  std::cout << "dune-wzl -i in-file -o out-file"                                               << std::endl
+  std::cout << "dune_wzl -i in-file -o out-file"                                               << std::endl
             << "         filenames without file extensions"                                    << std::endl
             << "-i filename: read from filename.nas"                                           << std::endl
             << "-o filename: output to filename.h5"                                            << std::endl
