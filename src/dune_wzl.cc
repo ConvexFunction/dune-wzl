@@ -322,6 +322,9 @@ int main(int argc, char** argv) try
   // Timer for progress indication
   Timer intervalTimer;
 
+  // Switch off iterative refinement
+  solver.setOption(UMFPACK_IRSTEP,0);
+
   for (hsize_t& k = dune_file_solution_start[0]; k < forces.size(); ++k) {
     x = 0;
 
