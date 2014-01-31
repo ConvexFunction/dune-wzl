@@ -220,7 +220,7 @@ int main(int argc, char** argv) try
   std::cout << "Reading and setting up vectors took " << watch.lastElapsed() << " seconds." << std::endl;
 
   // //////////////////////////////// Prepare vtkWriter ////////////////////////////////
-  VTKWriter<GV> vtkWriter(grid->leafView());
+  VTKWriter<GV> vtkWriter(grid->leafGridView());
 
   vtkWriter.addVertexData(rigidNodeMap, "rigid");
   vtkWriter.addVertexData(forceMap, "force");
@@ -289,11 +289,11 @@ int main(int argc, char** argv) try
     mu = E/(2*(1+nu));
 
   // create the model describing our problem
-  Model model(grid->leafView(), rigidNodeMap, lambda, mu);
+  Model model(grid->leafGridView(), rigidNodeMap, lambda, mu);
 
   // setup grid function space
-  FEM fem(grid->leafView());
-  GFS gfs(grid->leafView(), fem);
+  FEM fem(grid->leafGridView());
+  GFS gfs(grid->leafGridView(), fem);
 
   // create constraints container
   C cg;
